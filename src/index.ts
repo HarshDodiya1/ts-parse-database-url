@@ -1,4 +1,3 @@
-import * as querystring from 'querystring';
 import * as mUri from 'mongodb-uri';
 import * as url from 'url';
 
@@ -15,7 +14,15 @@ export class DatabaseConfig {
 
 export default function(databaseUrl: string): DatabaseConfig {
   let parsedUrl = url.parse(databaseUrl, false, true);
-  let config = querystring.parse(parsedUrl.query);
+  let config: any = {};
+  
+  // Parse query parameters using URLSearchParams
+  if (parsedUrl.query) {
+    const searchParams = new URLSearchParams(parsedUrl.query);
+    for (const [key, value] of searchParams.entries()) {
+      config[key] = value;
+    }
+  }
 
   // Fix trailing :
   config.driver = (parsedUrl.protocol || 'sqlite3:').replace(/\:$/, '');
@@ -23,13 +30,12 @@ export default function(databaseUrl: string): DatabaseConfig {
   // Cloud Foundry fix
   if (config.driver == 'mysql2') config.driver = 'mysql';
 
-  // url.parse() produces an "auth" that looks like "user:password". No
-  // individual fields, unfortunately.
+  // Handle authentication
   if (parsedUrl.auth) {
-    var userPassword = parsedUrl.auth.split(':', 2);
-    config.user = userPassword[0];
-    if (userPassword.length > 1) {
-      config.password = userPassword[1];
+    const [user, password] = parsedUrl.auth.split(':', 2);
+    config.user = user;
+    if (password) {
+      config.password = password;
     }
   }
 
@@ -48,28 +54,27 @@ export default function(databaseUrl: string): DatabaseConfig {
     }
   } else {
     if (config.driver === 'mongodb') {
-      // MongoDB URLs can have multiple comma-separated host:port pairs. This
-      // trips up the standard URL parser.
-      var mongoParsedUrl = mUri.parse(databaseUrl);
+      // MongoDB URLs can have multiple comma-separated host:port pairs
+      const mongoParsedUrl = mUri.parse(databaseUrl);
       let mongoUrl: any = {};
       parsedUrl = { query: '' };
+      
       if (mongoParsedUrl.hosts) {
-        mongoUrl.hosts = mongoParsedUrl.hosts;
-        for (var i = 0; i < mongoUrl.hosts.length; i += 1) {
-          if (mongoUrl.hosts[i].port)
-            mongoUrl.hosts[i].port = mongoUrl.hosts[i].port.toString();
-        }
+        mongoUrl.hosts = mongoParsedUrl.hosts.map(host => ({
+          ...host,
+          port: host.port ? host.port.toString() : undefined
+        }));
+        
         if (mongoUrl.hosts.length === 1) {
           if (mongoUrl.hosts[0].host) mongoUrl.host = mongoUrl.hosts[0].host;
-          if (mongoUrl.hosts[0].port)
-            mongoUrl.port = mongoUrl.hosts[0].port.toString();
+          if (mongoUrl.hosts[0].port) mongoUrl.port = mongoUrl.hosts[0].port;
         }
       }
+      
       if (mongoParsedUrl.database) mongoUrl.database = mongoParsedUrl.database;
-
       config = { ...config, ...mongoUrl };
     } else {
-      // Some drivers (e.g., redis) don't have database names.
+      // Handle database names for other drivers
       if (parsedUrl.pathname) {
         config.database = parsedUrl.pathname
           .replace(/^\//, '')
@@ -81,5 +86,5 @@ export default function(databaseUrl: string): DatabaseConfig {
     if (parsedUrl.port) config.port = parsedUrl.port;
   }
 
-  return <DatabaseConfig>config;
+  return config as DatabaseConfig;
 }
